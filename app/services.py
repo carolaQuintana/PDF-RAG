@@ -17,7 +17,7 @@ embeddings = OpenAIEmbeddings()
 
 
 def initialize_vector_store():
-    collection_name = "rag_project_db"
+    collection_name = os.getenv("COLLECTION_NAME")
     collections = db.get_collections()
 
     if collection_name not in [col.name for col in collections.collections]:
@@ -29,12 +29,11 @@ def initialize_vector_store():
                 on_disk=True,
             ),
         )
-    else:
-        doc_store = QdrantVectorStore(
-            client=QdrantClient(url="http://localhost:6333"),
-            collection_name=collection_name,
-            embedding=embeddings,
-        )
+    doc_store = QdrantVectorStore(
+        client=QdrantClient(url=os.getenv("QDRANT_CLIENT_URL")),
+        collection_name=collection_name,
+        embedding=embeddings,
+    )
     return doc_store
 
 
@@ -43,7 +42,7 @@ def format_docs(docs):
 
 
 def debug_question(question: str, doc_store: QdrantVectorStore):
-    results = doc_store.similarity_search(question, 2)
+    results = doc_store.similarity_search(question, 1)
     data_points = [
         {"page_content": r.page_content, "metadata": r.metadata} for r in results
     ]
@@ -51,7 +50,7 @@ def debug_question(question: str, doc_store: QdrantVectorStore):
 
 
 def generate_answer(question: str, doc_store: QdrantVectorStore) -> str:
-    results = doc_store.similarity_search(question, 2)
+    results = doc_store.similarity_search(question, 1)
     context = format_docs(results)
 
     content = f"""Answer the following question using the provided context. If you cannot answer the question within the context, don't lie and make up stuff. Just say you need more context.
@@ -62,17 +61,22 @@ Context: {context}
 """
 
     response = client.chat.completions.create(
-        model="gpt-4o-mini", messages=[{"role": "user", "content": content}]
+        model=os.getenv("OPENAI_MODEL"),
+        messages=[{"role": "system", "content": content}],
     )
 
     return response.choices[0].message.content.strip()
 
 
 def add_document(page_title: str, doc_store: QdrantVectorStore) -> str:
+
+    CHUNK_SIZE = 1000
+    CHUNK_OVERLAP = 200
+
     try:
         doc = WikipediaLoader(query=page_title, load_max_docs=1).load()
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000, chunk_overlap=200
+            chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP
         )
         splits = text_splitter.split_documents(doc)
         doc_store.add_documents(documents=splits)

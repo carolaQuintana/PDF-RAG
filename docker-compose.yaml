@@ -9,6 +9,14 @@ services:
     networks:
       - qdrant_network
 
+  fastapi:
+    build:
+      context: .
+    ports:
+      - "8080:8000"
+    networks:
+      - qdrant_network
+
 volumes:
   qdrant_data:
 
