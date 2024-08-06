@@ -6,10 +6,10 @@ from dotenv import load_dotenv, find_dotenv
 import os
 from langchain_qdrant import QdrantVectorStore
 from langchain_openai import OpenAIEmbeddings
-
+from .db import db
+from qdrant_client import QdrantClient, models
 
 load_dotenv(find_dotenv())
-
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
@@ -17,26 +17,32 @@ embeddings = OpenAIEmbeddings()
 
 
 def initialize_vector_store():
-    docs = WikipediaLoader(query="HUNTER X HUNTER", load_max_docs=1).load()
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-    splits = text_splitter.split_documents(docs)
-    doc_store = QdrantVectorStore.from_documents(
-        documents=splits,
-        embedding=embeddings,
-        location=":memory:",
-        collection_name="my_documents",
-    )
+    collection_name = "rag_project_db"
+    collections = db.get_collections()
+
+    if collection_name not in [col.name for col in collections.collections]:
+        db.create_collection(
+            collection_name=collection_name,
+            vectors_config=models.VectorParams(
+                size=1536,
+                distance=models.Distance.COSINE,
+                on_disk=True,
+            ),
+        )
+    else:
+        doc_store = QdrantVectorStore(
+            client=QdrantClient(url="http://localhost:6333"),
+            collection_name=collection_name,
+            embedding=embeddings,
+        )
     return doc_store
-
-
-doc_store = initialize_vector_store()
 
 
 def format_docs(docs):
     return "\n\n".join(doc.page_content for doc in docs)
 
 
-def debug_question(question: str):
+def debug_question(question: str, doc_store: QdrantVectorStore):
     results = doc_store.similarity_search(question, 2)
     data_points = [
         {"page_content": r.page_content, "metadata": r.metadata} for r in results
@@ -44,7 +50,7 @@ def debug_question(question: str):
     return {"data_points": data_points}
 
 
-def generate_answer(question: str) -> str:
+def generate_answer(question: str, doc_store: QdrantVectorStore) -> str:
     results = doc_store.similarity_search(question, 2)
     context = format_docs(results)
 
@@ -62,14 +68,14 @@ Context: {context}
     return response.choices[0].message.content.strip()
 
 
-def add_document(page_title: str) -> str:
+def add_document(page_title: str, doc_store: QdrantVectorStore) -> str:
     try:
         doc = WikipediaLoader(query=page_title, load_max_docs=1).load()
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000, chunk_overlap=200
         )
         splits = text_splitter.split_documents(doc)
-        doc_store.add_documents(splits)
+        doc_store.add_documents(documents=splits)
         return "Document added successfully"
     except Exception as e:
         raise Exception(f"Failed to add document: {str(e)}")
